@@ -13,11 +13,11 @@ const distDir = path.join(rootDir, "dist");
 const cacheDir = path.join(rootDir, ".cache");
 const stagingDir = path.join(cacheDir, "webos-package");
 const appStageDir = path.join(stagingDir, "app");
-const serviceStageDir = path.join(stagingDir, "space.nuvio.webos.service");
+const serviceStageDir = path.join(stagingDir, "com.nuvio.lg.service");
 const serviceTempBundlePath = path.join(stagingDir, "__webos-service.bundle.js");
 
 const appName = "Nuvio TV";
-const webOsServiceId = "space.nuvio.webos.service";
+const webOsServiceId = "com.nuvio.lg.service";
 const webOsServiceSourceDir = path.join(rootDir, "services", webOsServiceId);
 
 async function assertDistExists() {
@@ -76,19 +76,23 @@ ${webOsScriptTag}  <script defer src="app.bundle.js"></script>
 `;
 }
 
-async function injectWebOsRuntimeEnv(targetDir) {
-  const values = {
-    WEBOS_SERVICE_ID: webOsServiceId
-  };
+async function injectDebugLogEndpoint(targetDir) {
+  const endpoint = String(process.env.NUVIO_DEBUG_LOG_ENDPOINT || "").trim();
+  if (!endpoint) {
+    return;
+  }
   const envPath = path.join(targetDir, "nuvio.env.js");
   const injection = `
-(function configureNuvioWebOsRuntimeEnv() {
+(function configureNuvioDebugLogEndpoint() {
   var root = typeof globalThis !== "undefined" ? globalThis : window;
-  root.__NUVIO_ENV__ = Object.assign({}, root.__NUVIO_ENV__ || {}, ${JSON.stringify(values, null, 2)});
+  root.__NUVIO_ENV__ = Object.assign({}, root.__NUVIO_ENV__ || {}, {
+    DEBUG_LOG_ENDPOINT: ${JSON.stringify(endpoint)}
+  });
 }());
 `;
   const existing = await readFile(envPath, "utf8").catch(() => "");
   await writeFile(envPath, `${existing.trim()}\n${injection}`, "utf8");
+  console.log(`remote console endpoint: ${endpoint}`);
 }
 
 async function stageApp() {
@@ -101,19 +105,17 @@ async function stageApp() {
   appInfo.version = version;
   appInfo.icon = "icon.png";
   appInfo.largeIcon = "largeIcon.png";
-  appInfo.splashBackground = "splash.png";
   appInfo.services = [webOsServiceId];
   await writeFile(appInfoPath, `${JSON.stringify(appInfo, null, 2)}\n`, "utf8");
 
   await Promise.all([
     cp(path.join(rootDir, "assets", "images", "icon.png"), path.join(appStageDir, "icon.png")),
-    cp(path.join(rootDir, "assets", "images", "largeIcon.png"), path.join(appStageDir, "largeIcon.png")),
-    cp(path.join(rootDir, "assets", "images", "splash.png"), path.join(appStageDir, "splash.png"))
+    cp(path.join(rootDir, "assets", "images", "largeIcon.png"), path.join(appStageDir, "largeIcon.png"))
   ]);
 
   const webOsScriptPath = await resolveWebOsScriptPath(appStageDir);
   await writeFile(path.join(appStageDir, "index.html"), buildWebOsIndexHtml({ webOsScriptPath }), "utf8");
-  await injectWebOsRuntimeEnv(appStageDir);
+  await injectDebugLogEndpoint(appStageDir);
 }
 
 async function stageService() {
@@ -174,38 +176,6 @@ function runCommand(command, args) {
   });
 }
 
-function isMissingCommandError(error, command) {
-  return Boolean(
-    error
-    && (
-      error.code === "ENOENT"
-      || String(error.message || "").includes(`${command} exited with code ENOENT`)
-      || String(error.message || "").includes(`spawn ${command} ENOENT`)
-    )
-  );
-}
-
-async function runAresPackage(args) {
-  try {
-    await runCommand("ares-package", args);
-    return;
-  } catch (error) {
-    if (!isMissingCommandError(error, "ares-package")) {
-      throw error;
-    }
-  }
-
-  await runCommand("npm", [
-    "exec",
-    "--yes",
-    "--package",
-    "@webos-tools/cli@3.2.2",
-    "--",
-    "ares-package",
-    ...args
-  ]);
-}
-
 async function packageWebOs() {
   await syncVersionFiles();
   await assertDistExists();
@@ -216,7 +186,7 @@ async function packageWebOs() {
   await Promise.all([stageApp(), stageService()]);
 
   console.log("creating webOS IPK...");
-  await runAresPackage([appStageDir, serviceStageDir, "--outdir", rootDir]);
+  await runCommand("ares-package", [appStageDir, serviceStageDir, "--outdir", rootDir]);
 }
 
 try {
