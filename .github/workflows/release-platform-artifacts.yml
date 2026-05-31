@@ -143,3 +143,22 @@ jobs:
             -f event_type=build-release \
             -F client_payload[source_repo]="$SOURCE_REPO" \
             -F client_payload[tag]="$TAG_NAME"
+
+  dispatch-installer-build:
+    runs-on: ubuntu-latest
+    needs: resolve-release-payload
+    permissions:
+      contents: read
+    steps:
+      - name: Dispatch installer build
+        if: ${{ vars.INSTALLER_REPO != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.REPO_DISPATCH_TOKEN }}
+          TARGET_REPO: ${{ vars.INSTALLER_REPO }}
+          TAG_NAME: ${{ needs.resolve-release-payload.outputs.tag }}
+          SOURCE_REPO: ${{ github.repository }}
+        run: |
+          gh api --method POST "repos/$TARGET_REPO/dispatches" \
+            -f event_type=build-release \
+            -F client_payload[source_repo]="$SOURCE_REPO" \
+            -F client_payload[tag]="$TAG_NAME"
