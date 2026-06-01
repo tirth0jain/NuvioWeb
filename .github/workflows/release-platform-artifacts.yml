@@ -72,6 +72,16 @@ jobs:
           node-version: 20
           cache: npm
 
+      - name: Write webOS release env file
+        env:
+          WEBOS_NUVIO_ENV_JS: ${{ secrets.WEBOS_NUVIO_ENV_JS }}
+        run: |
+          if [ -z "$WEBOS_NUVIO_ENV_JS" ]; then
+            echo "WEBOS_NUVIO_ENV_JS not set; using repository fallback env handling"
+            exit 0
+          fi
+          printf '%s' "$WEBOS_NUVIO_ENV_JS" > nuvio.env.js
+
       - name: Install dependencies
         run: npm ci
 
