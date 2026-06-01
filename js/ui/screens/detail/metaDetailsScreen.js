@@ -1957,13 +1957,7 @@ export const MetaDetailsScreen = {
   },
 
   renderSeriesHeroMarkup(meta) {
-    const nextEpisodeLabel = this.nextEpisodeToWatch
-      ? t(
-        "detail.nextEpisodeShort",
-        { season: this.nextEpisodeToWatch.season, episode: this.nextEpisodeToWatch.episode },
-        "Next S{{season}}E{{episode}}"
-      )
-      : t("detail.play", {}, "Play");
+    const nextEpisodeLabel = this.getSeriesHeroPlayLabel();
     const creditLine = Array.isArray(meta.director) && meta.director.length
       ? meta.director.slice(0, 2).join(", ")
       : Array.isArray(meta.writer) && meta.writer.length
@@ -1979,6 +1973,16 @@ export const MetaDetailsScreen = {
       creditPrefix,
       showWatchedButton: false
     });
+  },
+
+  getSeriesHeroPlayLabel() {
+    return this.nextEpisodeToWatch
+      ? t(
+        "detail.nextEpisodeShort",
+        { season: this.nextEpisodeToWatch.season, episode: this.nextEpisodeToWatch.episode },
+        "Next S{{season}}E{{episode}}"
+      )
+      : t("detail.play", {}, "Play");
   },
 
   renderMovieHeroMarkup(meta) {
@@ -2253,13 +2257,13 @@ export const MetaDetailsScreen = {
     this.restoredTrackScrollLeftByKey = captureHorizontalScrollMap(this.container);
   },
 
-  updateRenderedDetailSections(meta) {
+  updateRenderedDetailSections(meta, focusRestoreOverride = null) {
     if (!this.container || !meta || !this.container.querySelector(".series-detail-shell")) {
-      this.render(meta);
+      this.render(meta, focusRestoreOverride || null);
       return;
     }
 
-    const focusRestore = this.captureDetailFocus();
+    const focusRestore = focusRestoreOverride || this.captureDetailFocus();
     this.captureRenderedChromeState();
     const isSeries = isSeriesDetailMeta(meta, this.episodes);
     const backdropNode = this.container.querySelector(".series-detail-backdrop");
@@ -2510,6 +2514,79 @@ export const MetaDetailsScreen = {
         </article>
       `;
     }).join("");
+  },
+
+  syncSeriesHeroPlayButtonLabel() {
+    const labelNode = this.container?.querySelector?.(".series-detail-actions [data-action='playDefault'] span:last-child");
+    if (labelNode instanceof HTMLElement) {
+      labelNode.textContent = this.getSeriesHeroPlayLabel();
+    }
+  },
+
+  syncEpisodeCardWatchedDom(episode) {
+    const videoId = String(episode?.id || "").trim();
+    if (!videoId || !this.container) {
+      return;
+    }
+    const card = this.container.querySelector(`.series-episode-card[data-video-id="${escapeSelectorValue(videoId)}"]`);
+    if (!(card instanceof HTMLElement)) {
+      return;
+    }
+    const thumb = card.querySelector(".series-episode-thumb");
+    const copy = card.querySelector(".series-episode-copy");
+    if (!(thumb instanceof HTMLElement) || !(copy instanceof HTMLElement)) {
+      return;
+    }
+
+    const progress = this.episodeProgressMap.get(`${Number(episode.season || 0)}:${Number(episode.episode || 0)}`) || null;
+    const position = Number(progress?.positionMs || 0);
+    const duration = Number(progress?.durationMs || 0);
+    const progressRatio = duration > 0 ? Math.min(1, Math.max(0, position / duration)) : 0;
+    const isWatched = this.isEpisodeMarkedWatched(episode);
+
+    card.classList.toggle("watched", isWatched);
+
+    let statusNode = thumb.querySelector(".series-episode-status");
+    if (isWatched) {
+      if (!(statusNode instanceof HTMLElement)) {
+        statusNode = document.createElement("div");
+        thumb.appendChild(statusNode);
+      }
+      statusNode.className = "series-episode-status complete";
+      statusNode.innerHTML = renderWatchedBadgeGlyph();
+    } else if (progressRatio < 0.02) {
+      if (!(statusNode instanceof HTMLElement)) {
+        statusNode = document.createElement("div");
+        thumb.appendChild(statusNode);
+      }
+      statusNode.className = "series-episode-status idle";
+      statusNode.innerHTML = "";
+    } else if (statusNode instanceof HTMLElement) {
+      statusNode.remove();
+    }
+
+    let progressNode = copy.querySelector(".series-episode-progress");
+    if (progressRatio > 0.02 && progressRatio < 0.98) {
+      if (!(progressNode instanceof HTMLElement)) {
+        progressNode = document.createElement("div");
+        progressNode.className = "series-episode-progress";
+        copy.appendChild(progressNode);
+      }
+      progressNode.innerHTML = `<span style="width:${Math.round(progressRatio * 100)}%"></span>`;
+    } else if (progressNode instanceof HTMLElement) {
+      progressNode.remove();
+    }
+  },
+
+  syncEpisodePlaybackDom(episodes = []) {
+    if (!isSeriesDetailMeta(this.meta, this.episodes) || !this.container) {
+      this.updateRenderedDetailSections(this.meta);
+      return;
+    }
+    this.syncSeriesHeroPlayButtonLabel();
+    (Array.isArray(episodes) ? episodes : []).forEach((episode) => {
+      this.syncEpisodeCardWatchedDom(episode);
+    });
   },
 
   getEpisodeByVideoId(videoId) {
@@ -3264,7 +3341,7 @@ export const MetaDetailsScreen = {
     await this.setEpisodesWatchedState(episodes, watched);
     this.episodeHoldMenu = null;
     this.seasonHoldMenu = null;
-    this.render(this.meta, { selector: `.series-season-btn[data-season="${Number(season || this.selectedSeason || 1)}"]` });
+    this.syncEpisodePlaybackDom(episodes);
     return true;
   },
 
@@ -3275,7 +3352,7 @@ export const MetaDetailsScreen = {
     }
     await this.setEpisodesWatchedState(previousEpisodes, true);
     this.episodeHoldMenu = null;
-    this.render(this.meta, this.getEpisodeFocusDescriptor(episode.id));
+    this.syncEpisodePlaybackDom(previousEpisodes);
     return true;
   },
 
@@ -3326,7 +3403,7 @@ export const MetaDetailsScreen = {
     }
     await this.refreshEpisodePlaybackState();
     this.episodeHoldMenu = null;
-    this.render(this.meta, this.getEpisodeFocusDescriptor(episode.id));
+    this.syncEpisodePlaybackDom([episode]);
     return true;
   },
 
